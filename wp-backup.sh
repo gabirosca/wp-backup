@@ -199,9 +199,12 @@ case "$operation" in
             echo -e "${YELLOW}Suggested: $SUGGESTED_BACKUP${NC}"
             read -p "Use suggested path? (y/n) or enter custom path: " backup_input
 
-            if [[ "$backup_input" =~ ^[Yy]$ ]] || [ -z "$backup_input" ]; then
+            # Convert to lowercase for comparison
+            backup_input_lower=$(echo "$backup_input" | tr '[:upper:]' '[:lower:]')
+
+            if [[ "$backup_input_lower" =~ ^(y|yes)$ ]] || [ -z "$backup_input" ]; then
                 BACKUP_DIR="$SUGGESTED_BACKUP"
-            elif [[ "$backup_input" =~ ^[Nn]$ ]]; then
+            elif [[ "$backup_input_lower" =~ ^(n|no)$ ]]; then
                 read -p "Enter backup directory path: " BACKUP_DIR
             else
                 BACKUP_DIR="$backup_input"
@@ -266,7 +269,10 @@ case "$operation" in
         echo ""
         read -p "Proceed with backup? (y/n): " confirm
 
-        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        # Convert to lowercase for comparison
+        confirm_lower=$(echo "$confirm" | tr '[:upper:]' '[:lower:]')
+
+        if [[ ! "$confirm_lower" =~ ^(y|yes)$ ]]; then
             echo -e "${RED}Backup cancelled.${NC}"
             exit 0
         fi
@@ -563,8 +569,12 @@ case "$operation" in
         echo ""
 
         read -p "Import database automatically? (y/n): " auto_import
+
+        # Convert to lowercase for comparison
+        auto_import_lower=$(echo "$auto_import" | tr '[:upper:]' '[:lower:]')
+
         AUTO_IMPORT=false
-        if [[ "$auto_import" =~ ^[Yy]$ ]]; then
+        if [[ "$auto_import_lower" =~ ^(y|yes)$ ]]; then
             AUTO_IMPORT=true
         fi
         echo ""
@@ -586,7 +596,10 @@ case "$operation" in
 
         read -p "Proceed with restore? (yes/no): " confirm
 
-        if [[ ! "$confirm" =~ ^[Yy][Ee][Ss]$ ]]; then
+        # Convert to lowercase for comparison
+        confirm_lower=$(echo "$confirm" | tr '[:upper:]' '[:lower:]')
+
+        if [[ ! "$confirm_lower" =~ ^(y|yes)$ ]]; then
             echo -e "${RED}Restore cancelled.${NC}"
             exit 0
         fi
