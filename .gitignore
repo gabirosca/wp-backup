@@ -1,0 +1,27 @@
+# Backup files
+website-backup-*.zip
+*.sql
+*.sql.original
+
+# Setup/helper files (not needed in repository)
+PUBLISH_TO_GITHUB.txt
+GITHUB_SETUP.md
+setup-github.sh
+
+# Temporary files
+*.tmp
+.cleanup
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
