@@ -1,0 +1,22 @@
+# Backup files
+website-backup-*.zip
+*.sql
+*.sql.original
+
+# Temporary files
+*.tmp
+.cleanup
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
