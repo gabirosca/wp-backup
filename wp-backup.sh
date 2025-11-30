@@ -279,10 +279,8 @@ case "$operation" in
         echo ""
 
         # Execute Backup
-        SITE_NAME=$(basename "$(cd "$WORDPRESS_ROOT" && pwd)")
         BACKUP_DATE=$(date +%d-%m-%Y)
         BACKUP_TIME=$(date +%H-%M-%S)
-        FINAL_BACKUP_NAME="website-backup-${BACKUP_DATE}-${BACKUP_TIME}.zip"
 
         # Temporary directories for backup process
         TEMP_BACKUP_DIR=$(mktemp -d)
@@ -311,6 +309,31 @@ case "$operation" in
         echo -e "${GREEN}✓ Database: $DB_NAME${NC}"
         echo -e "${GREEN}✓ User: $DB_USER${NC}"
         echo -e "${GREEN}✓ Host: $DB_HOST${NC}"
+
+        # Detect WordPress domain from database
+        SITE_DOMAIN=""
+        if command -v wp >/dev/null 2>&1; then
+            SITE_DOMAIN=$(wp option get siteurl --path="$WORDPRESS_ROOT" --quiet 2>/dev/null | sed 's|https\?://||' | sed 's|/.*||')
+        fi
+
+        # Fallback: try to get domain from database directly
+        if [ -z "$SITE_DOMAIN" ] && command -v mysql >/dev/null 2>&1; then
+            SITE_DOMAIN=$(mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" -sN -e "SELECT option_value FROM wp_options WHERE option_name='siteurl' LIMIT 1;" 2>/dev/null | sed 's|https\?://||' | sed 's|/.*||')
+        fi
+
+        # If domain detection failed, use folder name as fallback
+        if [ -z "$SITE_DOMAIN" ]; then
+            SITE_DOMAIN=$(basename "$(cd "$WORDPRESS_ROOT" && pwd)")
+            echo -e "${YELLOW}⚠ Could not detect domain, using folder name: $SITE_DOMAIN${NC}"
+        else
+            echo -e "${GREEN}✓ Domain: $SITE_DOMAIN${NC}"
+        fi
+
+        # Replace dots with dashes for filename (domain.com -> domain-com)
+        SITE_DOMAIN_CLEAN=$(echo "$SITE_DOMAIN" | tr '.' '-')
+
+        # Set final backup filename with domain
+        FINAL_BACKUP_NAME="${SITE_DOMAIN_CLEAN}-backup-${BACKUP_DATE}-${BACKUP_TIME}.zip"
         echo ""
 
         echo -e "${YELLOW}[2/4] Backing up files...${NC}"

@@ -89,7 +89,7 @@ Creates a complete backup of your WordPress site.
 3. Confirm settings
 4. Backup is created
 
-**Output:** `website-backup-DD-MM-YYYY-HH-MM-SS.zip`
+**Output:** `domain-com-backup-DD-MM-YYYY-HH-MM-SS.zip` (domain auto-detected from WordPress database)
 
 **What's included:**
 - All WordPress files (core, themes, plugins, uploads)
