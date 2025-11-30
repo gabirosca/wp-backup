@@ -1,3 +1,5 @@
+.gitignore
+
 # Backup files
 website-backup-*.zip
 *.sql
