@@ -27,18 +27,31 @@ find_wordpress_installations() {
     local current_user_home=$(eval echo ~)
     local search_locations=()
 
-    # Add current user's home directory
-    search_locations+=("$current_user_home")
+    # If running as root, search all locations
+    if [ "$(whoami)" = "root" ]; then
+        # Add /home directory (all user directories)
+        if [ -d "/home" ]; then
+            search_locations+=("/home")
+        fi
 
-    # Add common locations
-    if [ -d "/var/www" ]; then
-        search_locations+=("/var/www")
-    fi
+        # Add /var/www (common web server location)
+        if [ -d "/var/www" ]; then
+            search_locations+=("/var/www")
+        fi
 
-    # Add parent of script directory (in case WP is nearby)
-    local script_parent=$(dirname "$SCRIPT_DIR")
-    if [ -d "$script_parent" ]; then
-        search_locations+=("$script_parent")
+        # Add current user's home directory if not already covered by /home
+        if [[ ! "$current_user_home" =~ ^/home/ ]]; then
+            search_locations+=("$current_user_home")
+        fi
+
+        # Add parent of script directory (in case WP is nearby)
+        local script_parent=$(dirname "$SCRIPT_DIR")
+        if [ -d "$script_parent" ] && [ "$script_parent" != "/home" ] && [ "$script_parent" != "/var/www" ]; then
+            search_locations+=("$script_parent")
+        fi
+    else
+        # Running as normal user - only search current user's home
+        search_locations+=("$current_user_home")
     fi
 
     # Search in each location
@@ -69,12 +82,33 @@ find_wordpress_installations() {
 find_backup_directories() {
     # Determine search starting point
     local current_user_home=$(eval echo ~)
-    local search_locations=("$current_user_home")
+    local search_locations=()
 
-    # Add parent of script directory
-    local script_parent=$(dirname "$SCRIPT_DIR")
-    if [ -d "$script_parent" ]; then
-        search_locations+=("$script_parent")
+    # If running as root, search all locations
+    if [ "$(whoami)" = "root" ]; then
+        # Add /home directory (all user directories)
+        if [ -d "/home" ]; then
+            search_locations+=("/home")
+        fi
+
+        # Add /var/www (common web server location)
+        if [ -d "/var/www" ]; then
+            search_locations+=("/var/www")
+        fi
+
+        # Add current user's home directory if not already covered by /home
+        if [[ ! "$current_user_home" =~ ^/home/ ]]; then
+            search_locations+=("$current_user_home")
+        fi
+
+        # Add parent of script directory
+        local script_parent=$(dirname "$SCRIPT_DIR")
+        if [ -d "$script_parent" ] && [ "$script_parent" != "/home" ] && [ "$script_parent" != "/var/www" ]; then
+            search_locations+=("$script_parent")
+        fi
+    else
+        # Running as normal user - only search current user's home
+        search_locations+=("$current_user_home")
     fi
 
     # Search for common backup directory names
@@ -100,7 +134,7 @@ find_backup_directories() {
 # Function to find backup files
 find_backup_files() {
     local backup_dir="$1"
-    find "$backup_dir" -maxdepth 1 -name "website-backup-*.zip" -type f 2>/dev/null | sort -r
+    find "$backup_dir" -maxdepth 1 -name "*-backup-*.zip" -type f 2>/dev/null | sort -r
 }
 
 # Main interactive menu
@@ -310,15 +344,38 @@ case "$operation" in
         echo -e "${GREEN}✓ User: $DB_USER${NC}"
         echo -e "${GREEN}✓ Host: $DB_HOST${NC}"
 
+        # Detect WordPress file owner
+        WP_OWNER=$(stat -c '%U' "$WORDPRESS_ROOT/wp-config.php")
+        echo -e "${GREEN}✓ WordPress owner: $WP_OWNER${NC}"
+
         # Detect WordPress domain from database
         SITE_DOMAIN=""
         if command -v wp >/dev/null 2>&1; then
-            SITE_DOMAIN=$(wp option get siteurl --path="$WORDPRESS_ROOT" --quiet 2>/dev/null | sed 's|https\?://||' | sed 's|/.*||')
+            if [ "$(whoami)" = "root" ] && [ "$WP_OWNER" != "root" ]; then
+                SITE_DOMAIN=$(su "$WP_OWNER" -s /bin/bash -c "cd '$WORDPRESS_ROOT' && wp option get siteurl --quiet 2>/dev/null" | sed 's|https\?://||' | sed 's|/.*||')
+            else
+                SITE_DOMAIN=$(wp option get siteurl --path="$WORDPRESS_ROOT" --quiet 2>/dev/null | sed 's|https\?://||' | sed 's|/.*||')
+            fi
         fi
 
         # Fallback: try to get domain from database directly
         if [ -z "$SITE_DOMAIN" ] && command -v mysql >/dev/null 2>&1; then
-            SITE_DOMAIN=$(mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" -sN -e "SELECT option_value FROM wp_options WHERE option_name='siteurl' LIMIT 1;" 2>/dev/null | sed 's|https\?://||' | sed 's|/.*||')
+            # Parse host and port from DB_HOST
+            MYSQL_HOST="$DB_HOST"
+            MYSQL_PORT=""
+            if [[ "$DB_HOST" == *:* ]]; then
+                MYSQL_HOST="${DB_HOST%:*}"
+                MYSQL_PORT="${DB_HOST##*:}"
+            fi
+
+            # Build mysql command
+            MYSQL_CMD="mysql -h \"$MYSQL_HOST\""
+            if [ -n "$MYSQL_PORT" ]; then
+                MYSQL_CMD="$MYSQL_CMD -P $MYSQL_PORT"
+            fi
+            MYSQL_CMD="$MYSQL_CMD -u \"$DB_USER\" -p\"$DB_PASSWORD\" \"$DB_NAME\" -sN -e \"SELECT option_value FROM wp_options WHERE option_name='siteurl' LIMIT 1;\""
+
+            SITE_DOMAIN=$(eval "$MYSQL_CMD" 2>/dev/null | sed 's|https\?://||' | sed 's|/.*||')
         fi
 
         # If domain detection failed, use folder name as fallback
@@ -382,24 +439,59 @@ case "$operation" in
         DATABASE_FILE="${TEMP_BACKUP_DIR}/database.sql"
 
         # Try WP-CLI first, fallback to mysqldump
+        DB_EXPORT_SUCCESS=false
         if command -v wp >/dev/null 2>&1; then
-            if wp db export "$DATABASE_FILE" --path="$WORDPRESS_ROOT" --quiet 2>/dev/null; then
+            if [ "$(whoami)" = "root" ] && [ "$WP_OWNER" != "root" ]; then
+                # Running as root, execute WP-CLI as the WordPress owner
+                # Use su without login (-) to preserve current directory and environment
+                if su "$WP_OWNER" -s /bin/bash -c "cd '$WORDPRESS_ROOT' && wp db export '$DATABASE_FILE' --quiet 2>/dev/null"; then
+                    DB_EXPORT_SUCCESS=true
+                fi
+            else
+                # Running as normal user or WordPress is owned by root
+                if wp db export "$DATABASE_FILE" --path="$WORDPRESS_ROOT" --quiet 2>/dev/null; then
+                    DB_EXPORT_SUCCESS=true
+                fi
+            fi
+
+            if [ "$DB_EXPORT_SUCCESS" = true ]; then
                 DUMP_SIZE=$(du -h "$DATABASE_FILE" | cut -f1)
                 echo -e "${GREEN}✓ Database exported (via WP-CLI): $DUMP_SIZE${NC}"
             else
-                echo -e "${RED}Error: Failed to export database via WP-CLI${NC}"
-                exit 1
+                echo -e "${YELLOW}⚠ WP-CLI export failed, trying mysqldump...${NC}"
             fi
-        elif command -v mysqldump >/dev/null 2>&1; then
-            if mysqldump -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" > "$DATABASE_FILE" 2>/dev/null; then
+        fi
+
+        # Fallback to mysqldump if WP-CLI failed or not available
+        if [ "$DB_EXPORT_SUCCESS" = false ] && command -v mysqldump >/dev/null 2>&1; then
+            # Parse host and port from DB_HOST (handle "host:port" format)
+            MYSQL_HOST="$DB_HOST"
+            MYSQL_PORT=""
+            if [[ "$DB_HOST" == *:* ]]; then
+                MYSQL_HOST="${DB_HOST%:*}"
+                MYSQL_PORT="${DB_HOST##*:}"
+            fi
+
+            # Build mysqldump command
+            MYSQLDUMP_CMD="mysqldump -h \"$MYSQL_HOST\""
+            if [ -n "$MYSQL_PORT" ]; then
+                MYSQLDUMP_CMD="$MYSQLDUMP_CMD -P $MYSQL_PORT"
+            fi
+            MYSQLDUMP_CMD="$MYSQLDUMP_CMD -u \"$DB_USER\" -p\"$DB_PASSWORD\" \"$DB_NAME\""
+
+            if eval "$MYSQLDUMP_CMD" > "$DATABASE_FILE" 2>/dev/null; then
                 DUMP_SIZE=$(du -h "$DATABASE_FILE" | cut -f1)
                 echo -e "${GREEN}✓ Database exported (via mysqldump): $DUMP_SIZE${NC}"
+                DB_EXPORT_SUCCESS=true
             else
                 echo -e "${RED}Error: Failed to export database via mysqldump${NC}"
                 exit 1
             fi
-        else
-            echo -e "${RED}Error: Neither WP-CLI nor mysqldump found${NC}"
+        fi
+
+        # Final check if database export succeeded
+        if [ "$DB_EXPORT_SUCCESS" = false ]; then
+            echo -e "${RED}Error: Could not export database (neither WP-CLI nor mysqldump succeeded)${NC}"
             exit 1
         fi
 
@@ -413,22 +505,38 @@ case "$operation" in
             if command -v wp >/dev/null 2>&1; then
                 echo -e "${CYAN}Using WP-CLI search-replace (serialization-safe)...${NC}"
 
-                REPLACE_COUNT=$(wp search-replace "$OLD_DOMAIN" "$NEW_DOMAIN" \
-                    --path="$WORDPRESS_ROOT" \
-                    --dry-run \
-                    --format=count 2>/dev/null || echo "0")
+                if [ "$(whoami)" = "root" ] && [ "$WP_OWNER" != "root" ]; then
+                    # Running as root, execute WP-CLI as the WordPress owner
+                    REPLACE_COUNT=$(su "$WP_OWNER" -s /bin/bash -c "cd '$WORDPRESS_ROOT' && wp search-replace '$OLD_DOMAIN' '$NEW_DOMAIN' --dry-run --format=count 2>/dev/null" || echo "0")
 
-                if [ "$REPLACE_COUNT" != "0" ]; then
-                    wp search-replace "$OLD_DOMAIN" "$NEW_DOMAIN" \
-                        --path="$WORDPRESS_ROOT" \
-                        --export="$DATABASE_FILE" \
-                        --quiet 2>/dev/null || {
-                        echo -e "${YELLOW}⚠ WP-CLI search-replace export failed, using sed fallback${NC}"
-                        sed -i "s|$OLD_DOMAIN|$NEW_DOMAIN|g" "$DATABASE_FILE"
-                    }
-                    echo -e "${GREEN}✓ Replaced $REPLACE_COUNT occurrences: $OLD_DOMAIN → $NEW_DOMAIN${NC}"
+                    if [ "$REPLACE_COUNT" != "0" ]; then
+                        su "$WP_OWNER" -s /bin/bash -c "cd '$WORDPRESS_ROOT' && wp search-replace '$OLD_DOMAIN' '$NEW_DOMAIN' --export='$DATABASE_FILE' --quiet 2>/dev/null" || {
+                            echo -e "${YELLOW}⚠ WP-CLI search-replace export failed, using sed fallback${NC}"
+                            sed -i "s|$OLD_DOMAIN|$NEW_DOMAIN|g" "$DATABASE_FILE"
+                        }
+                        echo -e "${GREEN}✓ Replaced $REPLACE_COUNT occurrences: $OLD_DOMAIN → $NEW_DOMAIN${NC}"
+                    else
+                        echo -e "${YELLOW}⚠ No occurrences of $OLD_DOMAIN found${NC}"
+                    fi
                 else
-                    echo -e "${YELLOW}⚠ No occurrences of $OLD_DOMAIN found${NC}"
+                    # Running as normal user or WordPress is owned by root
+                    REPLACE_COUNT=$(wp search-replace "$OLD_DOMAIN" "$NEW_DOMAIN" \
+                        --path="$WORDPRESS_ROOT" \
+                        --dry-run \
+                        --format=count 2>/dev/null || echo "0")
+
+                    if [ "$REPLACE_COUNT" != "0" ]; then
+                        wp search-replace "$OLD_DOMAIN" "$NEW_DOMAIN" \
+                            --path="$WORDPRESS_ROOT" \
+                            --export="$DATABASE_FILE" \
+                            --quiet 2>/dev/null || {
+                            echo -e "${YELLOW}⚠ WP-CLI search-replace export failed, using sed fallback${NC}"
+                            sed -i "s|$OLD_DOMAIN|$NEW_DOMAIN|g" "$DATABASE_FILE"
+                        }
+                        echo -e "${GREEN}✓ Replaced $REPLACE_COUNT occurrences: $OLD_DOMAIN → $NEW_DOMAIN${NC}"
+                    else
+                        echo -e "${YELLOW}⚠ No occurrences of $OLD_DOMAIN found${NC}"
+                    fi
                 fi
             else
                 echo -e "${YELLOW}⚠ Using basic sed replacement${NC}"
@@ -674,12 +782,25 @@ case "$operation" in
 
         mkdir -p "$RESTORE_DIR"
 
-        cp -r "$FILES_SOURCE"/* "$RESTORE_DIR/" || {
-            echo -e "${RED}Error: Failed to copy files${NC}"
-            exit 1
-        }
-
-        echo -e "${GREEN}✓ Files restored${NC}"
+        # Use rsync if available for better permission handling, fallback to cp with force
+        if command -v rsync >/dev/null 2>&1; then
+            if rsync -a --delete "$FILES_SOURCE/" "$RESTORE_DIR/" 2>/dev/null; then
+                echo -e "${GREEN}✓ Files restored (via rsync)${NC}"
+            else
+                echo -e "${RED}Error: Failed to restore files via rsync${NC}"
+                echo -e "${YELLOW}⚠ You may need to run this script with sudo for this restore${NC}"
+                exit 1
+            fi
+        else
+            # Fallback: use cp with force flag
+            if cp -rf "$FILES_SOURCE"/* "$RESTORE_DIR/" 2>/dev/null; then
+                echo -e "${GREEN}✓ Files restored (via cp)${NC}"
+            else
+                echo -e "${RED}Error: Failed to restore files${NC}"
+                echo -e "${YELLOW}⚠ You may need to run this script with sudo for this restore${NC}"
+                exit 1
+            fi
+        fi
         echo ""
 
         echo -e "${YELLOW}[4/5] Reading database credentials...${NC}"
@@ -702,13 +823,30 @@ case "$operation" in
         echo -e "${GREEN}✓ Database: $DB_NAME${NC}"
         echo -e "${GREEN}✓ User: $DB_USER${NC}"
         echo -e "${GREEN}✓ Host: $DB_HOST${NC}"
+
+        # Detect WordPress file owner for restore
+        WP_OWNER=$(stat -c '%U' "$RESTORE_DIR/wp-config.php")
+        echo -e "${GREEN}✓ WordPress owner: $WP_OWNER${NC}"
         echo ""
 
         echo -e "${YELLOW}[5/5] Importing database...${NC}"
 
         if [ "$AUTO_IMPORT" = true ]; then
             if command -v wp >/dev/null 2>&1; then
-                if wp db import "$TEMP_EXTRACT/database.sql" --path="$RESTORE_DIR" 2>/dev/null; then
+                DB_IMPORT_SUCCESS=false
+                if [ "$(whoami)" = "root" ] && [ "$WP_OWNER" != "root" ]; then
+                    # Running as root, execute WP-CLI as the WordPress owner
+                    if su "$WP_OWNER" -s /bin/bash -c "cd '$RESTORE_DIR' && wp db import '$TEMP_EXTRACT/database.sql' 2>/dev/null"; then
+                        DB_IMPORT_SUCCESS=true
+                    fi
+                else
+                    # Running as normal user or WordPress is owned by root
+                    if wp db import "$TEMP_EXTRACT/database.sql" --path="$RESTORE_DIR" 2>/dev/null; then
+                        DB_IMPORT_SUCCESS=true
+                    fi
+                fi
+
+                if [ "$DB_IMPORT_SUCCESS" = true ]; then
                     echo -e "${GREEN}✓ Database imported (via WP-CLI)${NC}"
                 else
                     echo -e "${RED}Error: Failed to import database via WP-CLI${NC}"
@@ -718,7 +856,22 @@ case "$operation" in
                     AUTO_IMPORT=false
                 fi
             elif command -v mysql >/dev/null 2>&1; then
-                if mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" < "$TEMP_EXTRACT/database.sql" 2>/dev/null; then
+                # Parse host and port from DB_HOST
+                MYSQL_HOST="$DB_HOST"
+                MYSQL_PORT=""
+                if [[ "$DB_HOST" == *:* ]]; then
+                    MYSQL_HOST="${DB_HOST%:*}"
+                    MYSQL_PORT="${DB_HOST##*:}"
+                fi
+
+                # Build mysql command
+                MYSQL_CMD="mysql -h \"$MYSQL_HOST\""
+                if [ -n "$MYSQL_PORT" ]; then
+                    MYSQL_CMD="$MYSQL_CMD -P $MYSQL_PORT"
+                fi
+                MYSQL_CMD="$MYSQL_CMD -u \"$DB_USER\" -p\"$DB_PASSWORD\" \"$DB_NAME\""
+
+                if eval "$MYSQL_CMD" < "$TEMP_EXTRACT/database.sql" 2>/dev/null; then
                     echo -e "${GREEN}✓ Database imported (via mysql)${NC}"
                 else
                     echo -e "${RED}Error: Failed to import database via mysql${NC}"

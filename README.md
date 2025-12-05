@@ -58,6 +58,131 @@ chmod +x wp-backup.sh
 
 That's it! The script is fully interactive.
 
+### 🌐 Global Installation (Recommended)
+
+Make the script available to **all users** with the `wpb` command from anywhere on your system.
+
+#### Method 1: System-Wide Installation (All Users)
+
+**Step 1: Create a scripts directory**
+```bash
+sudo mkdir -p /usr/local/bin/wp-backup
+```
+
+**Step 2: Copy or move the script**
+```bash
+# If you downloaded it:
+sudo cp wp-backup.sh /usr/local/bin/wp-backup/wp-backup.sh
+
+# OR if you cloned the repo:
+sudo cp /path/to/wp-backup/wp-backup.sh /usr/local/bin/wp-backup/wp-backup.sh
+```
+
+**Step 3: Make it executable**
+```bash
+sudo chmod +x /usr/local/bin/wp-backup/wp-backup.sh
+```
+
+**Step 4: Create the global `wpb` command**
+```bash
+sudo ln -s /usr/local/bin/wp-backup/wp-backup.sh /usr/local/bin/wpb
+```
+
+**Step 5: Verify installation**
+```bash
+wpb
+```
+
+You should see the WordPress Backup Tool menu!
+
+**✅ Done!** Now any user on your system can run `wpb` from anywhere.
+
+---
+
+#### Method 2: Per-User Installation (Single User)
+
+If you want to install for a specific user only:
+
+**Step 1: Create a local bin directory**
+```bash
+mkdir -p ~/bin
+```
+
+**Step 2: Copy the script**
+```bash
+cp wp-backup.sh ~/bin/wp-backup.sh
+chmod +x ~/bin/wp-backup.sh
+```
+
+**Step 3: Create the `wpb` command**
+```bash
+ln -s ~/bin/wp-backup.sh ~/bin/wpb
+```
+
+**Step 4: Add to PATH (if not already)**
+```bash
+echo 'export PATH="$HOME/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+**Step 5: Verify installation**
+```bash
+wpb
+```
+
+---
+
+#### Method 3: Using Symbolic Links for Multiple Users
+
+If the script is already in a shared location (e.g., `/home/gabi/scripts/wp-backup/wp-backup.sh`):
+
+**For each user that needs access:**
+
+```bash
+# Create user's bin directory if it doesn't exist
+mkdir -p ~/bin
+
+# Create symbolic link
+ln -s /home/gabi/scripts/wp-backup/wp-backup.sh ~/bin/wpb
+
+# Add to PATH if needed
+echo 'export PATH="$HOME/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+
+# Test
+wpb
+```
+
+**Or, for system-wide access (requires sudo):**
+
+```bash
+sudo ln -s /home/gabi/scripts/wp-backup/wp-backup.sh /usr/local/bin/wpb
+```
+
+---
+
+### 🔄 Updating the Script
+
+When you update the script, the changes will automatically be available to all users:
+
+**For symbolic links:**
+```bash
+# Just update the original file
+cd /path/to/wp-backup
+git pull
+# OR replace wp-backup.sh with new version
+
+# All users will use the updated version automatically
+```
+
+**For copied files:**
+```bash
+# You need to recopy the file
+sudo cp wp-backup.sh /usr/local/bin/wp-backup/wp-backup.sh
+```
+
+**Tip:** Symbolic links are better for development/updates!
+
 ## 📖 Usage
 
 ### Interactive Menu
