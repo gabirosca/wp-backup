@@ -4,6 +4,8 @@
 # WordPress Backup, Migration & Restore Script
 # Purpose: Complete WordPress management - backup, migrate, and restore
 # Handles: Standard WordPress and Bricks Builder sites
+# Author: Gabriel Rosca | https://gabrielrosca.com
+# License: Non-Commercial License
 ################################################################################
 
 set -e
